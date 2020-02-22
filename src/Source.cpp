@@ -65,7 +65,7 @@ Returns an IP socket address struct given an IP and port
 struct sockaddr_in initAddr(char* ip, int port) {
     struct sockaddr_in sockAddr;
     sockAddr.sin_family = AF_INET;
-#pragma warning(suppress : 4996)
+    #pragma warning(suppress : 4996)
     sockAddr.sin_addr.S_un.S_addr = inet_addr(ip);
     sockAddr.sin_port = htons(port);
     return sockAddr;
@@ -102,18 +102,22 @@ int sendFirst(SOCKET socket, struct sockaddr_in address, int slen) {
     hs.version = 1;
     memset(&hsr, 0, sizeof(hsr));
 
-    int send1 = sendto(socket, (char*)&hs, sizeof(handshaker), 0, (struct sockaddr*) &address, slen);
-    printf("Sent: %d\n", send1);
     int timeOutCount = 1;
+    int noResponse = 1;
 
-    while (timeOutCount < 6) {
+    while (timeOutCount < 6 && noResponse) {
+        int send1 = sendto(socket, (char*)&hs, sizeof(handshaker), 0, (struct sockaddr*) & address, slen);
+        printf("Sent: %d\n", send1);
         if (recvfrom(socket, (char*)&hsr, sizeof(struct handshakerResponse), 0, (struct sockaddr*) & address, &slen) == SOCKET_ERROR) {
             printf("Timeout #%d\n", timeOutCount);
             timeOutCount++;
         }
+        else {
+            noResponse = 0;
+        }
     }
 
-    if (timeOutCount < 5) {
+    if (noResponse == 0) {
         printf("Recieved: %s\n", hsr.driverName);
         return 1;
     }
@@ -124,6 +128,7 @@ int sendFirst(SOCKET socket, struct sockaddr_in address, int slen) {
 Called after handshake is complete.
 1. Sends another handshake (OP ID = 1) to host in order to begin the flood of data
 2. Enters while(true) loop in order to constantly recv data from the host and saves that to the RTCarInfo struct info
+3. If an error occurs while reveiving data, calls sendFirst which attempts to reestablish the handshake
 */
 int enterMainNetLoop(SOCKET socket, struct sockaddr_in address, int slen, struct RTCarInfo *info) {
     struct handshaker hs;
@@ -136,8 +141,13 @@ int enterMainNetLoop(SOCKET socket, struct sockaddr_in address, int slen, struct
     while (true)
     {
         if (recvfrom(socket, (char*) info, sizeof(struct RTCarInfo), 0, (struct sockaddr*) &address, &slen) == SOCKET_ERROR) {
-            printf("An error has occurred! 2\n");
-            return -1;
+            printf("An error has occurred! Attempting to reconnect\n");
+            if (sendFirst(socket, address, slen)) {
+                sendto(socket, (char*) &hs, sizeof(handshaker), 0, (struct sockaddr*) &address, slen);
+            }
+            else {
+                return -1;
+            }
         }
     }
     return 1;
@@ -156,6 +166,7 @@ void ledLoop(struct RTCarInfo *info) {
     int greenValue[10] = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
     int blueValue[10] = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
     CorsairLedId ledId[10] = { CLK_1, CLK_2, CLK_3, CLK_4, CLK_5, CLK_6, CLK_7, CLK_8, CLK_9, CLK_0 };
+    CorsairLedId numpadId[10] = {CLK_Keypad0, CLK_Keypad1, CLK_Keypad2, CLK_Keypad3, CLK_Keypad4, CLK_Keypad5, CLK_Keypad6, CLK_Keypad7, CLK_Keypad8, CLK_Keypad9};
     struct CorsairLedColor ledCol;
     ledCol = CorsairLedColor{CLK_1, 0, 0, 0};
     
@@ -165,15 +176,32 @@ void ledLoop(struct RTCarInfo *info) {
        
         for (int i = 0; i < sizeof(ledId) / sizeof(ledId[0]); i++) {
             ledCol.ledId = ledId[i];
-            ledCol.r = 0;
+            if (i <= rpm) {
+                ledCol.r = 255;
+            } 
+            else {
+                ledCol.r = 0;
+            }
             ledCol.g = 0;
             ledCol.b = 0;
             CorsairSetLedsColors(1, &ledCol);
         }
-        ledCol.ledId = ledId[rpm];
-        ledCol.r = 255;
-        CorsairSetLedsColors(1, &ledCol);
+
+        int gear = (info->gear - 1) % 10;
+        for (int i = 0; i < sizeof(numpadId) / sizeof(numpadId[0]); i++) {
+            ledCol.ledId = numpadId[i];
+            if (i == gear) {
+                ledCol.r = 255;
+            }
+            else {
+                ledCol.r = 0;
+            }
+            ledCol.g = 0;
+            ledCol.b = 0;
+            CorsairSetLedsColors(1, &ledCol);
+        }
         CorsairSetLedsColorsFlushBuffer();
+
         std::this_thread::sleep_for(std::chrono::milliseconds(50));
     }
 }
