@@ -1,3 +1,5 @@
+#pragma once
+
 /*
 CREDIT : https://docs.google.com/document/d/1KfkZiIluXZ6mMhLWfDX1qAGbvhGRC3ZUzjVIt5FQpp4/pub
 Data is sent from the ACServer following the form of one of these structures. 
